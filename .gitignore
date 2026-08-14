@@ -1,0 +1,24 @@
+# Variáveis de ambiente reais (caminhos de pastas, portas, etc.)
+# Nunca versione o .env — apenas o .env.example serve de modelo.
+.env
+.env.*
+!.env.example
+
+# Dados de runtime dos containers (bibliotecas, cache, banco do Jellyfin,
+# configuração do tinyMediaManager). São gerados automaticamente ao subir
+# a stack e não devem ir para o repositório.
+config/
+!config/.gitkeep
+
+# Anotações e arquivos pessoais que não devem ser versionados
+notes/
+*.local.md
+*.local.yml
+*.local.yaml
+
+# Sistema operacional / editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/

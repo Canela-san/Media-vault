@@ -1,0 +1,44 @@
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      - TZ=${TZ:-UTC}
+    ports:
+      - "${JELLYFIN_PORT:-8096}:8096"
+      # Descoberta automática de servidor na rede local (usada pelos apps
+      # oficiais de celular/TV para "achar" o servidor sozinhos).
+      # Descomente se quiser essa conveniência.
+      # - "1900:1900/udp"
+      # - "7359:7359/udp"
+    volumes:
+      - ${JELLYFIN_CONFIG_DIR}:/config
+      - ${JELLYFIN_CACHE_DIR}:/cache
+      # Uma linha por MEDIA_PATH_N definido no .env. Adicione mais conforme
+      # necessário, sempre montando como somente-leitura (:ro) — o Jellyfin
+      # só precisa ler os arquivos para servi-los.
+      - ${MEDIA_PATH_1}:/media/library1:ro
+      - ${MEDIA_PATH_2}:/media/library2:ro
+    # Descomente para transcodificação por hardware (Intel Quick Sync / AMD VA-API)
+    # devices:
+    #   - /dev/dri:/dev/dri
+
+  tinymediamanager:
+    image: jlesage/tinymediamanager:latest
+    container_name: tinymediamanager
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+      - USER_ID=${PUID}
+      - GROUP_ID=${PGID}
+    ports:
+      # Interface gráfica do tinyMediaManager, acessível pelo navegador
+      - "${TMM_WEBUI_PORT:-5800}:5800"
+    volumes:
+      - ${TMM_CONFIG_DIR}:/config
+      # Mesmas pastas do Jellyfin, mas com escrita — o TMM precisa renomear
+      # e mover arquivos para organizá-los.
+      - ${MEDIA_PATH_1}:/storage/library1
+      - ${MEDIA_PATH_2}:/storage/library2
