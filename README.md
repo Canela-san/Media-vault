@@ -41,7 +41,7 @@ flowchart LR
 ## Início rápido
 
 ```bash
-git clone https://github.com/SEU_USUARIO/media-vault.git
+git clone (https://github.com/Canela-san/Media-vault.git)
 cd media-vault
 cp .env.example .env
 nano .env               # ajuste os caminhos das suas pastas de vídeo
