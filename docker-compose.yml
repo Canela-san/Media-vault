@@ -21,6 +21,8 @@ services:
       # só precisa ler os arquivos para servi-los.
       - ${MEDIA_PATH_1}:/media/library1:ro
       - ${MEDIA_PATH_2}:/media/library2:ro
+      - ${MEDIA_PATH_3}:/media/library3:ro
+      
     # Descomente para transcodificação por hardware (Intel Quick Sync / AMD VA-API)
     # devices:
     #   - /dev/dri:/dev/dri
@@ -42,3 +44,4 @@ services:
       # e mover arquivos para organizá-los.
       - ${MEDIA_PATH_1}:/storage/library1
       - ${MEDIA_PATH_2}:/storage/library2
+      - ${MEDIA_PATH_3}:/storage/library3
