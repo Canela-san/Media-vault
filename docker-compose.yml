@@ -22,6 +22,8 @@ services:
       # Somente leitura: o Jellyfin só serve o que o Radarr/Sonarr já
       # organizaram, nunca deveria escrever na biblioteca.
       - ${DATA_ROOT}/media:/data/media:ro
+      - ${DATA_ROOT_EXTERNA}:/data/HDExterno:ro
+      - ${DATA_ROOT_BACKUP}:/data/backup:ro
     # Descomente para transcodificação por hardware (Intel Quick Sync / AMD VA-API)
     # devices:
     #   - /dev/dri:/dev/dri
@@ -53,16 +55,14 @@ services:
 
   # ---------------------------------------------------------------------------
   # Byparr — resolve desafios Cloudflare/Turnstile para indexadores protegidos.
-  # Fala a mesma API do FlareSolverr clássico (porta 8191), então no Prowlarr
-  # ele se configura como um proxy de indexador do tipo "FlareSolverr" —
-  # é só apontar o Host para http://byparr:8191, sem mudar mais nada lá.
+  # Fala a mesma API do FlareSolverr clássico (porta 8191) — é também o que o
+  # opensubtitles-scraper usa como backend, então nenhum FlareSolverr
+  # separado é necessário no restante da stack.
   # ---------------------------------------------------------------------------
   byparr:
     image: ghcr.io/thephaseless/byparr:latest
     container_name: byparr
     restart: unless-stopped
-    # Roda um navegador de verdade (Camoufox) por dentro — precisa de memória
-    # compartilhada suficiente ou o processo do navegador cai/trava.
     shm_size: 1gb
     environment:
       - LOG_LEVEL=info
@@ -111,9 +111,6 @@ services:
       - "${RADARR_PORT:-7878}:7878"
     volumes:
       - ${CONFIG_ROOT}/radarr:/config
-      # Raiz inteira: o Radarr precisa ver /data/torrents (origem) e
-      # /data/media (destino) no MESMO caminho que o qBittorrent usa, para
-      # conseguir fazer hardlink em vez de copiar o arquivo na importação.
       - ${DATA_ROOT}:/data
     depends_on:
       - qbittorrent
@@ -142,10 +139,57 @@ services:
       - media-vault
 
   # ---------------------------------------------------------------------------
-  # Bazarr — legendas para o que o Radarr/Sonarr já baixaram e organizaram
+  # Recyclarr — sincroniza Custom Formats e Quality Profiles do TRaSH Guides
+  # com Radarr/Sonarr automaticamente (bloqueia CAM/TS/Screener, prioriza
+  # Remux/WEB-DL de verdade). Roda em modo cron, re-sincroniza sozinho.
+  # ---------------------------------------------------------------------------
+  recyclarr:
+    image: ghcr.io/recyclarr/recyclarr:8
+    container_name: recyclarr
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      - TZ=${TZ:-UTC}
+      - CRON_SCHEDULE=${RECYCLARR_CRON:-@daily}
+    volumes:
+      - ${CONFIG_ROOT}/recyclarr:/config
+    depends_on:
+      - radarr
+      - sonarr
+    networks:
+      - media-vault
+
+  # ---------------------------------------------------------------------------
+  # opensubtitles-scraper — serviço complementar que dá acesso de volta ao
+  # OpenSubtitles.org para o Bazarr+ (o provedor oficial só fala com o
+  # OpenSubtitles.com hoje). Usa o Byparr como backend de FlareSolverr.
+  # ---------------------------------------------------------------------------
+  opensubtitles-scraper:
+    image: ghcr.io/lavx/opensubtitles-scraper:latest
+    container_name: opensubtitles-scraper
+    restart: unless-stopped
+    ports:
+      - "${OPENSUBTITLES_SCRAPER_PORT:-8000}:8000"
+    environment:
+      - FLARESOLVERR_URL=http://byparr:8191/v1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    depends_on:
+      - byparr
+    networks:
+      - media-vault
+
+  # ---------------------------------------------------------------------------
+  # Bazarr+ — fork mantido pela comunidade (LavX/bazarr). No provedor
+  # OpenSubtitles.org, configure a "Scraper Service URL" como
+  # http://opensubtitles-scraper:8000
   # ---------------------------------------------------------------------------
   bazarr:
-    image: lscr.io/linuxserver/bazarr:latest
+    image: ghcr.io/lavx/bazarr:latest
     container_name: bazarr
     restart: unless-stopped
     environment:
@@ -156,16 +200,16 @@ services:
       - "${BAZARR_PORT:-6767}:6767"
     volumes:
       - ${CONFIG_ROOT}/bazarr:/config
-      # Só precisa da biblioteca final — mesmo caminho usado por Jellyfin/Radarr/Sonarr.
       - ${DATA_ROOT}/media:/data/media
     depends_on:
       - radarr
       - sonarr
+      - opensubtitles-scraper
     networks:
       - media-vault
 
   # ---------------------------------------------------------------------------
-  # Jellyseerr — descoberta e pedidos de mídia pelos usuários
+  # Jellyseerr (Seerr) — descoberta e pedidos de mídia pelos usuários
   # ---------------------------------------------------------------------------
   jellyseerr:
     image: ghcr.io/seerr-team/seerr:latest
@@ -202,7 +246,6 @@ services:
       - UN_RADARR_0_API_KEY=${RADARR_API_KEY}
       - UN_RADARR_0_PATH=/data/torrents/movies
     volumes:
-      # Mesmo caminho /data/torrents usado por qBittorrent e Radarr/Sonarr.
       - ${DATA_ROOT}/torrents:/data/torrents
     depends_on:
       - qbittorrent

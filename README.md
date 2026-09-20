@@ -8,18 +8,18 @@
 ![Stack](https://img.shields.io/badge/stack-Jellyfin%20%2B%20Arr-8A2BE2)
 ![Host](https://img.shields.io/badge/host-Pop!__OS-48B9C7)
 
-Servidor pessoal de streaming para acessar seu acervo de qualquer dispositivo na rede local — celular, PC ou Smart TV — com organização, metadados e downloads 100% automatizados. Peça um título, a casa toda assiste em qualidade de cinema.
+Servidor pessoal de streaming para acessar seu acervo de qualquer dispositivo na rede local — celular, PC ou Smart TV — com organização, metadados, legendas e downloads 100% automatizados. Peça um título, a casa toda assiste em qualidade de cinema.
 
 ---
 
 ## O que este repositório entrega
 
-Media Vault não é só "um Jellyfin com Docker Compose". É uma esteira completa de automação:
+Media Vault não é só "um Jellyfin com Docker Compose". É uma esteira completa de automação, com onze serviços trabalhando juntos:
 
 1. Você (ou qualquer pessoa da casa) **pede** um filme ou série pela interface do Jellyseerr.
-2. **Radarr/Sonarr** encontram o melhor release disponível — priorizando Remux e qualidade máxima — através dos indexadores cadastrados no **Prowlarr**.
+2. **Radarr/Sonarr** encontram o melhor release disponível — seguindo perfis de qualidade calibrados pelo **Recyclarr** (TRaSH Guides), que bloqueia cam/TS/screener e prioriza Remux/WEB-DL de verdade — através dos indexadores cadastrados no **Prowlarr**, com o **Byparr** driblando qualquer desafio Cloudflare pelo caminho.
 3. **qBittorrent** baixa; **Unpackerr** extrai automaticamente qualquer `.rar`/`.zip`; Radarr/Sonarr **organizam e renomeiam** o arquivo na estrutura que o Jellyfin espera, movendo-o via **hardlink** — instantâneo, sem gastar I/O nem duplicar espaço em disco.
-4. **Bazarr** varre múltiplas fontes atrás de legendas.
+4. **Bazarr+** varre múltiplas fontes atrás de legendas, incluindo o OpenSubtitles.org de volta (via o **opensubtitles-scraper**, já que o provedor oficial abandonou o acesso gratuito).
 5. **Jellyfin** cataloga tudo com capa, sinopse, elenco e trailers, e transmite para qualquer tela da casa.
 
 Zero intervenção manual depois do pedido inicial. E como espaço em disco não é o gargalo deste projeto, a prioridade em cada etapa é sempre a mesma: a **maior qualidade disponível**, sem recompressão desnecessária.
@@ -33,13 +33,16 @@ Zero intervenção manual depois do pedido inicial. E como espaço em disco não
 | Serviço | Papel |
 |---|---|
 | 🎬 **[Jellyfin](https://jellyfin.org/)** | O media server. Indexa a biblioteca já organizada, transcodifica sob demanda e transmite para qualquer tela — 100% open source, sem assinatura. |
-| 🔎 **[Jellyseerr](https://github.com/Fallenbagel/jellyseerr)** | O portal de descoberta e pedidos. Procure um título, peça com um clique — a stack cuida do resto sozinha. |
+| 🔎 **[Jellyseerr (Seerr)](https://github.com/seerr-team/seerr)** | O portal de descoberta e pedidos. Procure um título, peça com um clique — a stack cuida do resto sozinha. |
 | 🎞️ **[Radarr](https://radarr.video/)** | O curador de filmes: monitora pedidos, escolhe o melhor release disponível e aciona o download. |
 | 📺 **[Sonarr](https://sonarr.tv/)** | O mesmo trabalho do Radarr, episódio por episódio, temporada por temporada. |
+| 🎯 **[Recyclarr](https://recyclarr.dev/)** | O curador de qualidade: sincroniza os Custom Formats e Quality Profiles do TRaSH Guides com Radarr/Sonarr automaticamente — nada de cam de cinema escolhido no lugar de um WEB-DL. |
 | 🗂️ **[Prowlarr](https://prowlarr.com/)** | O hub de indexadores: cadastre seus trackers uma vez, ele sincroniza automaticamente com Radarr e Sonarr. |
+| 🛡️ **[Byparr](https://github.com/ThePhaseless/Byparr)** | O quebra-Cloudflare: resolve desafios Turnstile/Managed Challenge para indexadores e para o scraper de legendas, sem depender do FlareSolverr clássico (cada vez menos confiável). |
 | ⬇️ **[qBittorrent](https://www.qbittorrent.org/)** | O motor de download — cliente torrent leve, com WebUI e categorias por tipo de mídia. |
 | 📦 **[Unpackerr](https://github.com/Unpackerr/unpackerr)** | O "abridor de pacotes": extrai arquivos compactados assim que o download termina, sem intervenção manual. |
-| 💬 **[Bazarr](https://www.bazarr.media/)** | O caçador de legendas: varre múltiplas fontes por tudo que entra na biblioteca. |
+| 💬 **[Bazarr+](https://github.com/LavX/bazarr)** | O caçador de legendas: fork mantido pela comunidade que varre múltiplas fontes e traz de volta o OpenSubtitles.org. |
+| 🌐 **[opensubtitles-scraper](https://github.com/LavX/opensubtitles-scraper)** | O elo que falta: dá acesso ao OpenSubtitles.org pro Bazarr+ por scraping próprio, já que o provedor oficial encerrou o acesso gratuito de terceiros. |
 
 ```mermaid
 flowchart LR
@@ -49,11 +52,14 @@ flowchart LR
         subgraph Docker["docker compose"]
             Jellyseerr["Jellyseerr\n(descoberta e pedidos)"]
             Prowlarr["Prowlarr\n(indexadores)"]
+            Byparr["Byparr\n(driblar Cloudflare)"]
             Radarr["Radarr\n(filmes)"]
             Sonarr["Sonarr\n(séries)"]
+            Recyclarr["Recyclarr\n(qualidade TRaSH)"]
             qBit["qBittorrent\n(download)"]
             Unpackerr["Unpackerr\n(extração)"]
-            Bazarr["Bazarr\n(legendas)"]
+            Bazarr["Bazarr+\n(legendas)"]
+            Scraper["opensubtitles-scraper"]
             Jellyfin["Jellyfin\n(streaming)"]
         end
         Torrents[("DATA_ROOT/torrents")]
@@ -63,13 +69,18 @@ flowchart LR
     User -- "1 pede um título" --> Jellyseerr
     Jellyseerr -- "2 dispara o pedido" --> Radarr
     Jellyseerr -- "2 dispara o pedido" --> Sonarr
+    Recyclarr -- "define perfis de qualidade" --> Radarr
+    Recyclarr -- "define perfis de qualidade" --> Sonarr
     Radarr -- "3 busca releases" --> Prowlarr
     Sonarr -- "3 busca releases" --> Prowlarr
+    Byparr -- "resolve desafios" --> Prowlarr
     Radarr -- "4 manda baixar" --> qBit
     Sonarr -- "4 manda baixar" --> qBit
     qBit -- "5 baixa" --> Torrents
     Unpackerr -- "6 extrai .rar/.zip" --> Torrents
     Torrents == "7 hardlink instantâneo" ==> Media
+    Byparr -- "resolve desafios" --> Scraper
+    Scraper -- "busca no OpenSubtitles.org" --> Bazarr
     Bazarr -- "8 busca legendas" --> Media
     Jellyfin -- "9 lê" --> Media
     Jellyfin -- "10 transmite" --> Celular["📱 Celular"]
@@ -87,7 +98,7 @@ Curto: porque é 100% open source e gratuito — sem funcionalidades de acesso r
 
 Este projeto assume que **espaço em disco não é o gargalo** — sua atenção é. Por isso, cada peça da stack é configurada para preservar o arquivo original:
 
-- **Remux, não re-encode.** Radarr/Sonarr são configurados para priorizar releases Remux (cópia bit-a-bit do disco original, sem recompressão) sobre encodes menores. Você troca espaço em disco por fidelidade ao master.
+- **Remux, não re-encode — de verdade.** O Recyclarr sincroniza os Custom Formats e Quality Profiles do [TRaSH Guides](https://trash-guides.info/) com Radarr/Sonarr: cam/TS/screener ficam bloqueados por padrão, e o que sobra é ranqueado corretamente (Remux > WEB-DL > Bluray encode), não escolhido por tamanho de arquivo.
 - **Áudio sem perdas.** Faixas TrueHD, DTS-HD MA e afins passam direto — o Jellyfin faz *Direct Play* sempre que o dispositivo suporta, sem tocar num único bit do áudio.
 - **Transcodificação é exceção, não regra.** Ela só entra em cena quando um cliente específico não consegue reproduzir o codec/container original, e pode ser acelerada por hardware (Intel Quick Sync / AMD VA-API) descomentando a seção `devices` do Jellyfin no `docker-compose.yml`.
 - **Metadados densos.** Capa, sinopse, elenco, trailers e legendas em múltiplos idiomas — tudo buscado automaticamente, sem passar por um gerenciador manual.
@@ -107,6 +118,19 @@ Hardlinks só funcionam quando origem e destino estão **no mesmo sistema de arq
 
 ---
 
+## 🗣️ Legendas: OpenSubtitles.org de volta
+
+O provedor oficial `opensubtitles.org` encerrou o acesso via API para apps de terceiros, e o Bazarr padrão hoje só fala com a sucessora comercial `opensubtitles.com` — rate limit apertado, a não ser que se pague um plano VIP.
+
+Duas peças resolvem isso juntas:
+
+- **[Bazarr+](https://github.com/LavX/bazarr)**, um fork mantido pela comunidade que reimplementa o acesso ao `.org`.
+- **[opensubtitles-scraper](https://github.com/LavX/opensubtitles-scraper)**, o serviço que efetivamente faz o scraping, usando o **Byparr** já presente na stack para driblar qualquer desafio Cloudflare pelo caminho — sem precisar de conta, VIP nem um segundo FlareSolverr redundante.
+
+No Bazarr+, o provedor OpenSubtitles.org pede uma *Scraper Service URL*: aponte para `http://opensubtitles-scraper:8000`.
+
+---
+
 ## 🚀 Início rápido
 
 ```bash
@@ -120,11 +144,11 @@ docker compose up -d
 | Serviço | Endereço padrão |
 |---|---|
 | Jellyfin | `http://IP-DO-SERVIDOR:8096` |
-| Jellyseerr | `http://IP-DO-SERVIDOR:5055` |
+| Jellyseerr (Seerr) | `http://IP-DO-SERVIDOR:5055` |
 | Radarr | `http://IP-DO-SERVIDOR:7878` |
 | Sonarr | `http://IP-DO-SERVIDOR:8989` |
 | Prowlarr | `http://IP-DO-SERVIDOR:9696` |
-| Bazarr | `http://IP-DO-SERVIDOR:6767` |
+| Bazarr+ | `http://IP-DO-SERVIDOR:6767` |
 | qBittorrent | `http://IP-DO-SERVIDOR:8080` |
 
 Para descobrir o IP do servidor na rede local:
@@ -139,11 +163,13 @@ Para descobrir o IP do servidor na rede local:
 
 O `docker compose up -d` só sobe os containers — a "cola" entre eles é feita uma vez, pela interface de cada app. Os endereços abaixo assumem as portas padrão do `.env.example`; ajuste se você mudou alguma delas.
 
-1. **Prowlarr** → cadastre seus indexadores em *Indexers*, depois conecte Radarr e Sonarr em *Settings → Apps* (ele sincroniza os indexadores automaticamente daí em diante).
+1. **Prowlarr** → cadastre seus indexadores em *Indexers*, depois conecte Radarr e Sonarr em *Settings → Apps* (ele sincroniza os indexadores automaticamente daí em diante). Se algum indexador cair em desafio Cloudflare, configure um Indexer Proxy do tipo *FlareSolverr* apontando para `http://byparr:8191`, com uma tag, e aplique essa tag no indexador afetado.
 2. **Radarr / Sonarr** → em *Settings → Download Clients*, adicione o qBittorrent (`http://qbittorrent:8080`); em *Settings → Media Management*, aponte a *Root Folder* para `/data/media/movies` (Radarr) e `/data/media/tv` (Sonarr), e ative **"Use Hardlinks instead of Copy"** em *Completed Download Handling* — esse é o passo que liga o Atomic Move descrito acima.
 3. **qBittorrent** → crie categorias `movies` e `tv` salvando em `/data/torrents/movies` e `/data/torrents/tv`, para bater com os caminhos que o Radarr/Sonarr esperam.
 4. **Unpackerr** → copie a *API Key* do Radarr e do Sonarr (*Settings → General → Security*), cole em `RADARR_API_KEY` e `SONARR_API_KEY` no `.env`, e rode `docker compose up -d` de novo.
-5. **Jellyseerr** → conecte à sua conta Jellyfin e, em *Settings*, aponte para as instâncias de Radarr/Sonarr já configuradas.
+5. **Recyclarr** → escolha os templates TRaSH Guides que combinam com sua prioridade de qualidade (`docker compose run --rm recyclarr config list templates`), gere o `recyclarr.yml`, preencha `base_url`/`api_key` do Radarr e do Sonarr, e rode `docker compose run --rm recyclarr sync`. Depois de sincronizar, atribua o novo Quality Profile à biblioteca existente — o Recyclarr não faz isso sozinho.
+6. **Bazarr+** → em *Settings → Languages*, crie um Language Profile com os idiomas desejados e defina-o como padrão para Filmes e Séries (senão nada é buscado automaticamente). Em *Settings → Providers*, ative o OpenSubtitles.org apontando a *Scraper Service URL* para `http://opensubtitles-scraper:8000`, e ative os demais provedores que quiser somar.
+7. **Jellyseerr** → conecte à sua conta Jellyfin e, em *Settings*, aponte para as instâncias de Radarr/Sonarr já configuradas.
 
 ---
 
