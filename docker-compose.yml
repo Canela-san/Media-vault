@@ -1,47 +1,260 @@
 services:
+  # ---------------------------------------------------------------------------
+  # Jellyfin — media server: indexa a biblioteca já organizada e serve pela rede
+  # ---------------------------------------------------------------------------
   jellyfin:
-    image: jellyfin/jellyfin:latest
+    image: lscr.io/linuxserver/jellyfin:latest
     container_name: jellyfin
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ:-UTC}
+    ports:
+      - "${JELLYFIN_PORT:-8096}:8096"
+      # Descoberta automática na rede local (apps de celular/TV "acham" o
+      # servidor sozinhos). Descomente se quiser essa conveniência.
+      - "1900:1900/udp"
+      - "7359:7359/udp"
+    volumes:
+      - ${CONFIG_ROOT}/jellyfin:/config
+      - ${JELLYFIN_CACHE_DIR}:/cache
+      # Somente leitura: o Jellyfin só serve o que o Radarr/Sonarr já
+      # organizaram, nunca deveria escrever na biblioteca.
+      - ${DATA_ROOT}/media:/data/media:ro
+      - ${DATA_ROOT_EXTERNA}:/data/HDExterno:ro
+      - ${DATA_ROOT_BACKUP}:/data/backup:ro
+    # Descomente para transcodificação por hardware (Intel Quick Sync / AMD VA-API)
+    # devices:
+    #   - /dev/dri:/dev/dri
+    networks:
+      - media-vault
+
+  # ---------------------------------------------------------------------------
+  # Prowlarr — gerenciador central de indexadores, sincroniza com Radarr/Sonarr
+  # ---------------------------------------------------------------------------
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ:-UTC}
+    ports:
+      - "${PROWLARR_PORT:-9696}:9696"
+    volumes:
+      - ${CONFIG_ROOT}/prowlarr:/config
+    depends_on:
+      - byparr
+    networks:
+      - media-vault
+
+  # ---------------------------------------------------------------------------
+  # Byparr — resolve desafios Cloudflare/Turnstile para indexadores protegidos.
+  # Fala a mesma API do FlareSolverr clássico (porta 8191) — é também o que o
+  # opensubtitles-scraper usa como backend, então nenhum FlareSolverr
+  # separado é necessário no restante da stack.
+  # ---------------------------------------------------------------------------
+  byparr:
+    image: ghcr.io/thephaseless/byparr:latest
+    container_name: byparr
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      - LOG_LEVEL=info
+      - TZ=${TZ:-UTC}
+    ports:
+      - "${BYPARR_PORT:-8191}:8191"
+    networks:
+      - media-vault
+
+  # ---------------------------------------------------------------------------
+  # qBittorrent — cliente de download
+  # ---------------------------------------------------------------------------
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ:-UTC}
+      - WEBUI_PORT=${QBITTORRENT_PORT:-8080}
+      - TORRENTING_PORT=${QBITTORRENT_TORRENTING_PORT:-6881}
+    ports:
+      - "${QBITTORRENT_PORT:-8080}:${QBITTORRENT_PORT:-8080}"
+      - "${QBITTORRENT_TORRENTING_PORT:-6881}:${QBITTORRENT_TORRENTING_PORT:-6881}/tcp"
+      - "${QBITTORRENT_TORRENTING_PORT:-6881}:${QBITTORRENT_TORRENTING_PORT:-6881}/udp"
+    volumes:
+      - ${CONFIG_ROOT}/qbittorrent:/config
+      # Só enxerga a área de downloads — nunca a biblioteca final.
+      - ${DATA_ROOT}/torrents:/data/torrents
+    networks:
+      - media-vault
+
+  # ---------------------------------------------------------------------------
+  # Radarr — automação de filmes
+  # ---------------------------------------------------------------------------
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ:-UTC}
+    ports:
+      - "${RADARR_PORT:-7878}:7878"
+    volumes:
+      - ${CONFIG_ROOT}/radarr:/config
+      - ${DATA_ROOT}:/data
+    depends_on:
+      - qbittorrent
+    networks:
+      - media-vault
+
+  # ---------------------------------------------------------------------------
+  # Sonarr — automação de séries
+  # ---------------------------------------------------------------------------
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ:-UTC}
+    ports:
+      - "${SONARR_PORT:-8989}:8989"
+    volumes:
+      - ${CONFIG_ROOT}/sonarr:/config
+      - ${DATA_ROOT}:/data
+    depends_on:
+      - qbittorrent
+    networks:
+      - media-vault
+
+  # ---------------------------------------------------------------------------
+  # Recyclarr — sincroniza Custom Formats e Quality Profiles do TRaSH Guides
+  # com Radarr/Sonarr automaticamente (bloqueia CAM/TS/Screener, prioriza
+  # Remux/WEB-DL de verdade). Roda em modo cron, re-sincroniza sozinho.
+  # ---------------------------------------------------------------------------
+  recyclarr:
+    image: ghcr.io/recyclarr/recyclarr:8
+    container_name: recyclarr
     restart: unless-stopped
     user: "${PUID}:${PGID}"
     environment:
       - TZ=${TZ:-UTC}
-    ports:
-      - "${JELLYFIN_PORT:-8096}:8096"
-      # Descoberta automática de servidor na rede local (usada pelos apps
-      # oficiais de celular/TV para "achar" o servidor sozinhos).
-      # Descomente se quiser essa conveniência.
-      # - "1900:1900/udp"
-      # - "7359:7359/udp"
+      - CRON_SCHEDULE=${RECYCLARR_CRON:-@daily}
     volumes:
-      - ${JELLYFIN_CONFIG_DIR}:/config
-      - ${JELLYFIN_CACHE_DIR}:/cache
-      # Uma linha por MEDIA_PATH_N definido no .env. Adicione mais conforme
-      # necessário, sempre montando como somente-leitura (:ro) — o Jellyfin
-      # só precisa ler os arquivos para servi-los.
-      - ${MEDIA_PATH_1}:/media/library1:ro
-      - ${MEDIA_PATH_2}:/media/library2:ro
-      - ${MEDIA_PATH_3}:/media/library3:ro
-      
-    # Descomente para transcodificação por hardware (Intel Quick Sync / AMD VA-API)
-    # devices:
-    #   - /dev/dri:/dev/dri
+      - ${CONFIG_ROOT}/recyclarr:/config
+    depends_on:
+      - radarr
+      - sonarr
+    networks:
+      - media-vault
 
-  tinymediamanager:
-    image: jlesage/tinymediamanager:latest
-    container_name: tinymediamanager
+  # ---------------------------------------------------------------------------
+  # opensubtitles-scraper — serviço complementar que dá acesso de volta ao
+  # OpenSubtitles.org para o Bazarr+ (o provedor oficial só fala com o
+  # OpenSubtitles.com hoje). Usa o Byparr como backend de FlareSolverr.
+  # ---------------------------------------------------------------------------
+  opensubtitles-scraper:
+    image: ghcr.io/lavx/opensubtitles-scraper:latest
+    container_name: opensubtitles-scraper
+    restart: unless-stopped
+    ports:
+      - "${OPENSUBTITLES_SCRAPER_PORT:-8000}:8000"
+    environment:
+      - FLARESOLVERR_URL=http://byparr:8191/v1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    depends_on:
+      - byparr
+    networks:
+      - media-vault
+
+  # ---------------------------------------------------------------------------
+  # Bazarr+ — fork mantido pela comunidade (LavX/bazarr). No provedor
+  # OpenSubtitles.org, configure a "Scraper Service URL" como
+  # http://opensubtitles-scraper:8000
+  # ---------------------------------------------------------------------------
+  bazarr:
+    image: ghcr.io/lavx/bazarr:latest
+    container_name: bazarr
     restart: unless-stopped
     environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
       - TZ=${TZ:-UTC}
-      - USER_ID=${PUID}
-      - GROUP_ID=${PGID}
     ports:
-      # Interface gráfica do tinyMediaManager, acessível pelo navegador
-      - "${TMM_WEBUI_PORT:-5800}:5800"
+      - "${BAZARR_PORT:-6767}:6767"
     volumes:
-      - ${TMM_CONFIG_DIR}:/config
-      # Mesmas pastas do Jellyfin, mas com escrita — o TMM precisa renomear
-      # e mover arquivos para organizá-los.
-      - ${MEDIA_PATH_1}:/storage/library1
-      - ${MEDIA_PATH_2}:/storage/library2
-      - ${MEDIA_PATH_3}:/storage/library3
+      - ${CONFIG_ROOT}/bazarr:/config
+      - ${DATA_ROOT}/media:/data/media
+    depends_on:
+      - radarr
+      - sonarr
+      - opensubtitles-scraper
+    networks:
+      - media-vault
+
+  # ---------------------------------------------------------------------------
+  # Jellyseerr (Seerr) — descoberta e pedidos de mídia pelos usuários
+  # ---------------------------------------------------------------------------
+  jellyseerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    container_name: jellyseerr
+    restart: unless-stopped
+    init: true
+    environment:
+      - TZ=${TZ:-UTC}
+    ports:
+      - "${JELLYSEERR_PORT:-5055}:5055"
+    volumes:
+      - ${CONFIG_ROOT}/jellyseerr:/app/config
+    depends_on:
+      - jellyfin
+      - radarr
+      - sonarr
+    networks:
+      - media-vault
+
+  # ---------------------------------------------------------------------------
+  # Unpackerr — extrai .rar/.zip automaticamente antes do Radarr/Sonarr importar
+  # ---------------------------------------------------------------------------
+  unpackerr:
+    image: golift/unpackerr:latest
+    container_name: unpackerr
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      - TZ=${TZ:-UTC}
+      - UN_SONARR_0_URL=http://sonarr:8989
+      - UN_SONARR_0_API_KEY=${SONARR_API_KEY}
+      - UN_SONARR_0_PATH=/data/torrents/tv
+      - UN_RADARR_0_URL=http://radarr:7878
+      - UN_RADARR_0_API_KEY=${RADARR_API_KEY}
+      - UN_RADARR_0_PATH=/data/torrents/movies
+    volumes:
+      - ${DATA_ROOT}/torrents:/data/torrents
+    depends_on:
+      - qbittorrent
+      - radarr
+      - sonarr
+    networks:
+      - media-vault
+
+networks:
+  media-vault:
+    name: media-vault
+    driver: bridge
